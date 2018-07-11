@@ -2,7 +2,7 @@
   -- Your faction's ID.  Don't worry about picking a unique number from other
   --   mods.  Each mod has its faction IDs offset to keep their effective
   --   in-game values from colliding.  You probably don't need to change this.
-  80 = {
+  81 = {
     -- Faction default colors, if you feel like changing them.
     color0=0x0302b3,
     color1=0x000080,
