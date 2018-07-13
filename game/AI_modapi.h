@@ -122,12 +122,12 @@ struct AIAction {
     enum ActionLane
     {
         LANE_NONE        = 0,
-        LANE_MOVEMENT    = 1<<0,
-        LANE_SHOOT       = 1<<1,
-        LANE_TARGET      = 1<<2,
-        LANE_ASSEMBLE    = 1<<3,
-        LANE_SIGNAL      = 1<<4,
-        LANE_HEALER      = 1<<5,
+        LANE_MOVEMENT    = 1<<0, // 1
+        LANE_SHOOT       = 1<<1, // 2
+        LANE_TARGET      = 1<<2, // 4
+        LANE_ASSEMBLE    = 1<<3, // 8
+        LANE_SIGNAL      = 1<<4, // 16
+        LANE_HEALER      = 1<<5, // 32
         // ...
     };
 

@@ -156,7 +156,8 @@ uint AAttack2::update(uint blockedLanes)
     const float tdps = tcaps.totalDps / caps.totalHealth;
     const uint64 flags = m_ai->getConfig().flags;
 
-    const bool rushing = (mydps > 1.1f * tdps || (flags&SerialCommand::ALWAYS_RUSH)) && !(flags&SerialCommand::ALWAYS_MANEUVER);
+    const bool rushing = (mydps > 1.1f * tdps || (flags&SerialCommand::ALWAYS_RUSH)) && 
+		!(flags&(SerialCommand::ALWAYS_MANEUVER| SerialCommand::ALWAYS_KITE));
     const float snipeRange = 1.1f * tcaps.maxRange;
     const bool canStayOutOfRange = (caps.maxRange > snipeRange) &&
                                    target->cluster->isMobile() &&
