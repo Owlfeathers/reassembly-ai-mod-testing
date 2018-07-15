@@ -14,6 +14,13 @@ static CVAR_PLACEHOLDER(float, kAITargetThreshold, 0.25f);
     if (TYPE::supportsConfig(ai->getConfig()))      \
         ai->addAction(new TYPE(ai, __VA_ARGS__));
 
+#define RUSHRANGEFRAC 0.5
+#define SNIPERANGEFRAC 0.9
+#define MISSILERANGEFRAC 1.5	//if missiles are main weapon, stay at 1.5x estimated maxRange because game is bad at determining missile range
+#define MISSILEDPSFRAC 0.1		//FIXME - change this back to 0.67 after finished testing "Bombarding" behaviour
+#define RUSHCVMULT 1.5
+#define RAMHPMULT 3.0
+
 struct ATargetEnemy2 final : public AIAction {
 
     typedef std::pair<const Block*, AIMood> Target;
@@ -104,7 +111,7 @@ uint ATargetEnemy2::update(uint blockedLanes)
 
 struct AAttack2 final : public APositionBase {
 
-    snConfigDims targetCfg;
+    snConfigDims targetCfg;		//stores target data
 
 	AAttack2(AI* ai): APositionBase(ai) { }
 
@@ -116,82 +123,91 @@ struct AAttack2 final : public APositionBase {
 
 
 
-bool AAttack2::supportsConfig(const AICommandConfig& cfg)
+bool AAttack2::supportsConfig(const AICommandConfig& cfg)		//determines which actions get added
 {
-    return cfg.hasWeapons && (cfg.features&FIREABLE_WEAPONS) && AMove::supportsConfig(cfg);
+    return cfg.hasWeapons && (cfg.features&FIREABLE_WEAPONS) && AMove::supportsConfig(cfg);		//checks weapons which can be fired (e.g. exclude melee, contact explosive)
 }
 
 uint AAttack2::update(uint blockedLanes)
 {
     m_ai->rushDir = float2();
-    const Block *target = m_ai->target.get();
+    const Block *target = m_ai->target.get();	//get target - *target is a C++ smart pointer 
     if (isTargetObstructed(target))
         return LANE_NONE;
 
     target->getNavConfig(&targetCfg.cfg);
-    snPrecision precision;
+    snPrecision precision;						//get within certain radius of NavConfig destination
     precision.pos = getWaypointRadius();
 
     Block*        command = m_ai->command;
     BlockCluster* cluster = command->cluster;
 
-    const AttackCapabilities &caps = m_ai->getAttackCaps();
+    const AttackCapabilities &caps = m_ai->getAttackCaps();		//get own attack capabilities
 
     // can't attack without weapons...
     if (!caps.weapons)
         return noAction("No Weapons");
 
-    const AttackCapabilities &tcaps = target->commandAI->getAttackCaps();
+    const AttackCapabilities &tcaps = target->commandAI->getAttackCaps();	//get attack capabilities of target
 
-    const float2 pos        = cluster->getAbsolutePos();
-    const float2 targetPos  = target->getAbsolutePos();
-    const float2 targetVel  = target->cluster->getVel();
-    const float  targetDist = distance(targetPos, pos) - 0.5f * target->cluster->getCoreRadius();
+    const float2 pos        = cluster->getAbsolutePos();	//return position of centre of mass of own ship
+    const float2 targetPos  = target->getAbsolutePos();		//return position of centre of mass of enemy ship
+    const float2 targetVel  = target->cluster->getVel();	//return target's velocity
+    const float  targetDist = distance(targetPos, pos) - 0.67f * target->cluster->getCoreRadius();	//distance between own CoM and target CoM, minus 67% target's core radius 
 
     // FIXME targetDist is a hack here... works fine for the common case
 
     targetCfg.dims = 0;
 
-    const float mydps = caps.rushDps / tcaps.totalHealth;
-    const float tdps = tcaps.totalDps / caps.totalHealth;
+    const float myCombatVal = caps.rushDps / tcaps.totalHealth;	//own rushDps divided by target HP
+    const float tCombatVal = tcaps.totalDps / caps.totalHealth;	//target rushDps divided by own HP
+	const float myMissileDps = caps.totalDps - caps.rushDps; //totalDps - rushDps = DPS of missile weapons
+	const float tMissileDps = tcaps.totalDps - tcaps.rushDps;
     const uint64 flags = m_ai->getConfig().flags;
 
-    const bool rushing = (mydps > 1.1f * tdps || (flags&SerialCommand::ALWAYS_RUSH)) && !(flags&SerialCommand::ALWAYS_MANEUVER);
-    const float snipeRange = 1.1f * tcaps.maxRange;
-    const bool canStayOutOfRange = (caps.maxRange > snipeRange) &&
+	const bool isMissileShip = (myMissileDps > MISSILEDPSFRAC * caps.rushDps);		//consider missiles as main weapon if own missile DPS > MISSILEDPSFRAC * own non-missile DPS
+    const bool rushing = (myCombatVal > RUSHCVMULT * tCombatVal) || ((flags&SerialCommand::ALWAYS_RUSH) && !(flags&SerialCommand::ALWAYS_MANEUVER) && !(flags&SerialCommand::ALWAYS_KITE));	//rush is now close range engage instead of ram target
+	const bool ramming = (myCombatVal > RUSHCVMULT * tCombatVal) && (caps.totalHealth > RAMHPMULT * tcaps.totalHealth) || ((flags&SerialCommand::ALWAYS_RUSH) && !(flags&SerialCommand::ALWAYS_MANEUVER) && !(flags&SerialCommand::ALWAYS_KITE) && !isMissileShip);	//ram - new behaviour = old rushing
+    const float outrangeRange = 1.1f * tcaps.maxRange;
+	const float snipingRange = isMissileShip ? (MISSILERANGEFRAC * caps.maxRange) :		//if missiles are main weapon, stay near own maxRange since missiles are likely to greatly outrange other weapons
+		                       (SNIPERANGEFRAC * caps.bestRange);		//if missiles are not main weapon, stay just within own bestRange
+    const bool canStayOutOfRange = (caps.maxRange >= tcaps.maxRange) &&		//can only stay out of range if own maxRange > enemy maxRange
+	                               (caps.maxRange > outrangeRange) &&
                                    target->cluster->isMobile() &&
-                                   caps.getDpsAtRange(snipeRange) > 2.f * tcaps.healthRegen &&
+                                   caps.getDpsAtRange(outrangeRange) > tcaps.healthRegen &&
                                    !(flags&SerialCommand::ALWAYS_MANEUVER);
     const bool sniping = (!rushing && canStayOutOfRange) || (flags&SerialCommand::ALWAYS_KITE);
     status = rushing ? _("Rushing") :
-             canStayOutOfRange ? gettext_("Kiting", "Sniping") : _("Maneuvering");
+		     ramming ? _("Ramming") :
+		     isMissileShip? _("Bombarding") :
+             canStayOutOfRange ? gettext_("Kiting", "Sniping") : _("Manoeuvring");		//changed to British spelling to check whether displayed status is this - not sure what gettext is but breaks without it
 
-    // FIXME too many magic numbers here! at least make them cvars
-    const float wantRange = rushing ? 0.f :
-        canStayOutOfRange ? snipeRange :
-        (0.9f * caps.bestRange);
+    const float wantRange = ramming ? 0.f :		//go as close as possible to target if ramming
+		rushing ? (RUSHRANGEFRAC * caps.bestRange) :		//stay at RUSHRANGEFRAC of own bestRange if rushing
+        canStayOutOfRange ? outrangeRange :			//if able to outrange, stay at outrangeRange
+        snipingRange;			//stay at snipingRange if not able to stay out of range
 
-    const float2 targetLeadPos = targetPos + kAIBigTimeStep * targetVel;
+    const float2 targetLeadPos = targetPos + kAIBigTimeStep * targetVel;	//shoot at position where target will be in (kAIBigTimeStep = 0.5s by default)
     const float2 targetDir = normalize(targetLeadPos - pos);
 
-    if (!canStayOutOfRange && wantRange < targetDist)
+    if (!canStayOutOfRange && wantRange < targetDist)	//charge at target if cannot stay out of range and target is closer than desired range
         m_ai->rushDir = targetDir;
 
-    const float2 dir = (caps.hasFixed ? directionForFixed(cluster, targetPos, targetVel, FiringFilter()) :
+    const float2 dir = (caps.hasFixed ? directionForFixed(cluster, targetPos, targetVel, FiringFilter()) :		//try to face target if using fixed weapons
                         targetLeadPos - pos);
 
     // move to the optimal attack range
-    targetCfg.cfg.position = targetLeadPos - targetDir * wantRange;
-    targetCfg.cfg.velocity = 0.95f * targetVel; // damp velocity - otherwise they drift together
-    targetCfg.cfg.angle = vectorToAngle(dir);
+    targetCfg.cfg.position = targetLeadPos - targetDir * wantRange;		//move to position at desired range from target
+    targetCfg.cfg.velocity = 0.95f * targetVel;		//match velocity with target and damp slightly
+    targetCfg.cfg.angle = vectorToAngle(dir);		//determine what dierction to face
     targetCfg.dims = SN_POSITION | SN_ANGLE | (rushing ? SN_TARGET_VEL : SN_VELOCITY);
-    precision.pos = max(precision.pos, 0.1f * caps.bestRange);
+    precision.pos = max(precision.pos, 0.1f * caps.bestRange);		//precision needed is a 1/10 of bestRange
 
     // escape super fast if we are sniping
     if (sniping) {
         if (targetDist < wantRange) {
             targetCfg.cfg.velocity += 10.f * (targetCfg.cfg.position - pos);
-            targetCfg.dims = SN_ANGLE | SN_VELOCITY | SN_VEL_ALLOW_ROTATION;
+            targetCfg.dims = SN_ANGLE | SN_VELOCITY | SN_VEL_ALLOW_ROTATION;		//more important to keep fixed weapons on target than move optimally in desired direction
         }
         else if (targetDist < 1.1f * caps.maxRange) {
             // don't worry about position, just match velocity
@@ -202,13 +218,13 @@ uint AAttack2::update(uint blockedLanes)
         }
     }
     else if (caps.hasFixed && targetDist <= caps.maxRange) {
-        targetCfg.dims |= SN_POS_ANGLE;
+        targetCfg.dims |= SN_POS_ANGLE;		//something to do with pointing in right direction more aggressively with fixed weapons
     }
 
     if (!targetCfg.dims)
         return noAction("No direction");
 
-    m_ai->nav->setDest(targetCfg.cfg, targetCfg.dims, precision);
+    m_ai->nav->setDest(targetCfg.cfg, targetCfg.dims, precision);		//turn on thrusters
     return LANE_MOVEMENT;
 }
 

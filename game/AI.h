@@ -95,16 +95,16 @@ struct AISignal {
 };
 
 struct AttackCapabilities {
-    float  bestRange   = 0;
-    float  maxRange    = 0;
-    float  totalDps    = 0;
-    float  rushDps     = 0;
-    float  autofireDps = 0;
+    float  bestRange   = 0;			//tries to find longest range where most weapons can fire
+    float  maxRange    = 0;			//maximum range where any weapons can hit target
+    float  totalDps    = 0;			//DPS including launchers
+    float  rushDps     = 0;			//DPS without launcher
+    float  autofireDps = 0;			//DPS of point defence weapons
     float  weaponVel   = 0.f;
     uint64 weapons     = 0;
-    bool   hasFixed    = false;
-    float  totalHealth = 0.f;
-    float  maxAccel    = 0.f;
+    bool   hasFixed    = false;		//checks whether ship has any spinal weapons
+    float  totalHealth = 0.f;		//health of all blocks on a ship
+    float  maxAccel    = 0.f;		//maximum acceleration
     float  healthRegen = 0.f;
     
     vector< pair<float, float> > rangeDmg;
