@@ -1,30 +1,27 @@
+-- attempting to make vanilla factions use modified AI
+
+-- faction specification file
+-- playable==2 means unlocked by default
 {
-  -- Your faction's ID.  Don't worry about picking a unique number from other
-  --   mods.  Each mod has its faction IDs offset to keep their effective
-  --   in-game values from colliding.  You probably don't need to change this.
-  81 = {
-    -- Faction default colors, if you feel like changing them.
-    color0=0x03f2b3,
-    color1=0x00f080,
-    primaries=2,
-
-    -- ((TODO))
-	aiflags=                    WANDER|FORGIVING|TRACTOR_TRANSIENT|DODGES|SOCIAL,
-
-    -- Faction-wide application of a particular AI.
-    --   Must match a file in the "ai" folder (Visual Studio project name).
-    ainame="TacticsAI",
-
-    -- 0: Not a player-selectable faction (you probably don't want that).
-    -- 1: Player-selectable *after* beating it in a random encounter.
-    -- 2: Always player-selectable.
-    playable=2,
-
-    -- Rename the mod faction as you like.
-    name=_("Tactics AI Mod"),
-
-    -- Must match a ship name in the "ships" folder.
-    --   The numeric prefix is this faction's ID number.
-    start="81_interceptor"
-  }
+   8  = { name=_("Terran"), playable=2, start="8_interceptor",
+          color0=0x113077, color1=0xaaaaaa, aiflags=FORGIVING|WANDER|DODGES|SOCIAL|TRACTOR_TRANSIENT, ainame="TestingAI" },
+   2  = { name=_("Farmer"), playable=1, start="2_awesomefighter",
+          color0=0x79a82d, color1=0x404040, color2=0x061a65, primaries=3, aiflags=WANDER|SOCIAL|CAUTIOUS|FLOCKING|PEACEFUL|TRACTOR_TRANSIENT|DODGES, ainame="TestingAI" },
+   3  = { name=_("Red"), playable=1, start="3_brawler",
+          color0=0xe1a71c, color1= 0xa01d10, aiflags=FORGIVING|WANDER|DODGES|RECKLESS|METAMORPHOSIS|BAD_AIM, ainame="TestingAI",
+          thrustSFX=1},
+   4  = { name=_("Tinkrell"), playable=1,
+          color0=0x800000, color1= 0x30203b, aiflags=FORGIVING|WANDER|DODGES|AGGRESSIVE|FLOCKING|TRACTOR_TRANSIENT, ainame="TestingAI" },
+   -- Faction 5 is the vegetative plant faction (kPlantFaction)
+   6  = { name=_("Borg"), color0=0xffffff, color1=0xeeeeee, aiflags=FORGIVING|WANDER|DODGES, ainame="TestingAI" },
+   7  = { name=_("Flies"), color0=0x783201, color1=0xE0A231, aiflags=FORGIVING|WANDER|DODGES, ainame="TestingAI" },
+   11 = { name=_("Crystalline"), playable=1,
+          color0=0x058060, color1=0x074480, aiflags=FORGIVING|WANDER|DODGES|AGGRESSIVE, thrustSFX=1, ainame="TestingAI" },
+   10 = { name=_("Contestant"),
+          color0=0x800030, color1=0x303030, aiflags=FORGIVING|WANDER|DODGES|SOCIAL|TRACTOR_TRANSIENT, ainame="TestingAI" },
+   12 = { name=_("Bee"), playable=1,
+          color0=0xF8BC04, color1=0x514644, aiflags=WANDER|DODGES|AGGRESSIVE|HATES_PLANTS, ainame="TestingAI" },
+   13 = { name=_("Spiky Plant"), color0=0x98a606, color1=0x677606, aiflags=FORGIVING|HATES_PLANTS|WANDER|NO_PARENT, ainame="TestingAI" },
+   15 = { name=_("Sentinel"), playable=1, start="15_scythe",
+          color0=0x96bc2a, color1=0x404840, aiflags=WANDER|DODGES, ainame="TestingAI" },
 }
