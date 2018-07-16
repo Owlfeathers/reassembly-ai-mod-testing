@@ -14,13 +14,12 @@ static CVAR_PLACEHOLDER(float, kAITargetThreshold, 0.25f);
     if (TYPE::supportsConfig(ai->getConfig()))      \
         ai->addAction(new TYPE(ai, __VA_ARGS__));
 
-#define RUSHRANGEFRAC 0.4
-#define NORMALRANGEFRAC 0.9
-#define CAREFULRANGEFRAC 0.9
+#define RUSHRANGEFRAC 0.75			// fraction of bestRange to stay at when rushing
+#define SNIPERANGEFRAC 0.95			// fraction of bestRange to stay at when sniping
 #define MISSILERANGEFRAC 1.0		// if missiles are main weapon, stay at more than estimated maxRange because game is bad at determining missile range
-#define MISSILEDPSFRAC 0.2		// FIXME - change this back to 0.75 (?) after finished testing "Bombarding" behaviour
-#define RUSHCVMULT 1.5
-#define RAMHPMULT 4.0
+#define MISSILEDPSFRAC 0.8		// if missile DPS * MISSILEDPSFRAC is more than other DPS, use missiles as main weapon
+#define RUSHCVMULT 1.1		// if enemy combatVal * RUSHCVMULT < own combatVal, rush
+#define RAMHPMULT 4.0		// if own HP is 
 #define RAMDPSMULT 2.0
 
 struct ATargetEnemy2 final : public AIAction {
@@ -155,7 +154,7 @@ uint AAttack2::update(uint blockedLanes)
     const float2 pos        = cluster->getAbsolutePos();	// return position of centre of mass of own ship
     const float2 targetPos  = target->getAbsolutePos();		// return position of centre of mass of enemy ship
     const float2 targetVel  = target->cluster->getVel();	// return target's velocity
-    const float  targetDist = distance(targetPos, pos) - 0.67f * target->cluster->getCoreRadius();	// distance between own CoM and target CoM, minus 67% target's core radius 
+    const float  targetDist = distance(targetPos, pos) - 0.5f * target->cluster->getCoreRadius();	// distance between own CoM and target CoM, minus half target's core radius 
 
     // FIXME targetDist is a hack here... works fine for the common case
 
@@ -165,53 +164,62 @@ uint AAttack2::update(uint blockedLanes)
     const float tCombatVal = tcaps.totalDps / caps.totalHealth;	// target rushDps divided by own HP
 	const float myMissileDps = caps.totalDps - caps.rushDps; // totalDps - rushDps = DPS of missile weapons
 	const float tMissileDps = tcaps.totalDps - tcaps.rushDps;
+	//const float longSnipeRange = LONGSNIPERANGEFRAC * caps.bestRange;		// FIXME implement this
+	//const float shortSnipeRange = SNIPERANGEFRAC * caps.bestRange;		// FIXME implement this
     const uint64 flags = m_ai->getConfig().flags;
 
-	const bool isMissileShip = (myMissileDps > MISSILEDPSFRAC * caps.rushDps);		//consider missiles as main weapon if own missile DPS > MISSILEDPSFRAC * own non-missile DPS
-    const bool rushing = ((myCombatVal > RUSHCVMULT * tCombatVal) ||
+	//const bool isCriticallyDamaged = (cluster->getHealthFraction() < 0.6f);		// FIXME this causes an error 
+	const bool isMissileShip = (myMissileDps > MISSILEDPSFRAC * caps.rushDps);		// consider missiles as main weapon if own missile DPS > MISSILEDPSFRAC * own non-missile DPS
+
+    const bool rushing = ((myCombatVal > (RUSHCVMULT * tCombatVal)) || // rush if own combatVal is greater than enemy RUSHCVMULT * target's combatVal
 		                 (caps.bestRange < 0.8f * tcaps.bestRange) ||		// rush if own optimal range is much less than target's optimal range
-		                 (tMissileDps > MISSILEDPSFRAC * tcaps.rushDps)) &&		// rush if target uses missiles as main weapon
+		                 (tMissileDps > MISSILEDPSFRAC * tcaps.rushDps)) &&		// rush if target uses missiles as main weapon because missiles are weak at close range
 		                 !isMissileShip ||		// don't rush if missiles are main weapon, because missiles spread damage instead of focusing it when fighting at close range
-		                 ((flags&SerialCommand::ALWAYS_RUSH) && !(flags&SerialCommand::ALWAYS_MANEUVER) && !(flags&SerialCommand::ALWAYS_KITE));	//rush is now close range engage instead of ram target
+		                 (!(flags&SerialCommand::ALWAYS_RUSH) && !(flags&SerialCommand::ALWAYS_MANEUVER) && !(flags&SerialCommand::ALWAYS_KITE));	// rush is now close range engage instead of ram target
+
 	const bool ramming = (caps.rushDps > RAMDPSMULT * tcaps.rushDps) &&
 		                 (caps.totalHealth > RAMHPMULT * tcaps.totalHealth) &&
 		                 !isMissileShip ||		// don't ram if missiles are main weapon
-		                 ((flags&SerialCommand::ALWAYS_RUSH) && !(flags&SerialCommand::ALWAYS_MANEUVER) && !(flags&SerialCommand::ALWAYS_KITE) && !isMissileShip);	//ram - new behaviour = old rushing
-	const bool outgunned = (tCombatVal > myCombatVal);
-    const float outrangeRange = 1.1f * tcaps.maxRange;		// trigger for more careful engagement behaviour
+		                 //!isCriticallyDamaged ||	// don't ram if critically damaged
+		                 ((flags&SerialCommand::ALWAYS_RUSH) && !(flags&SerialCommand::ALWAYS_MANEUVER) && !(flags&SerialCommand::ALWAYS_KITE) && !isMissileShip);	// ram - new behaviour = old rushing
+
+	const bool outgunned = (tCombatVal > 4.f * myCombatVal);		// trigger for more careful engagement behaviour
+    const float outrangeRange = 1.1f * tcaps.bestRange;
 	const float snipingRange = isMissileShip ? (MISSILERANGEFRAC * caps.maxRange) :		// if missiles are main weapon, stay at longer range since missiles are likely to greatly outrange other weapons
-		                       outgunned ? (CAREFULRANGEFRAC * caps.maxRange) :		// if enemy is stronger, stay close to own maxRange
-		                       (NORMALRANGEFRAC * caps.bestRange);		// if enemy is not stronger, stay just within own bestRange
-    const bool canStayOutOfRange = (caps.maxRange >= tcaps.maxRange) &&		// can only stay out of range if own maxRange > enemy maxRange
-	                               (caps.maxRange > outrangeRange) &&
+		                       //(outgunned && (add conditions here)) ? (LONGSNIPERANGEFRAC * caps.bestRange) :		// FIXME implement this
+                 		       (SNIPERANGEFRAC * caps.bestRange);		// if enemy is not stronger or you don't have long-range weapons, stay within own bestRange
+
+    const bool canStayOutOfRange = (caps.bestRange > outrangeRange) &&
                                    target->cluster->isMobile() &&
                                    caps.getDpsAtRange(outrangeRange) > tcaps.healthRegen &&
                                    !(flags&SerialCommand::ALWAYS_MANEUVER);
-    const bool sniping = (!rushing && canStayOutOfRange) || (flags&SerialCommand::ALWAYS_KITE);
-    status = ramming ? _("Ramming") :
+
+    const bool stayingAtRange = (!rushing && !ramming && canStayOutOfRange) || (flags&SerialCommand::ALWAYS_KITE);
+    status = //isCriticallyDamaged ? _("Disengaging") :		// new behaviour for critically damaged ships - run away!
+		     ramming ? _("Ramming") :
 		     rushing ? _("Rushing") :
 		     isMissileShip? _("Bombarding") :		// new behaviour for ships using mostly missiles = engage at missile range instead of relying on bestRange calcs
-             canStayOutOfRange ? gettext_("Kiting", "Sniping") :		// not sure what gettext does, but removing it breaks something
-		     _("Manoeuvring");		// changed to British spelling to check whether displayed status is this
+             stayingAtRange ? gettext_("Kiting", "Sniping") :		// not sure what gettext does, but removing it breaks something
+		     _("Manoeuvring");		// changed to British spelling
 
     const float wantRange = ramming ? 0.f :		// go as close as possible to target if ramming
 		rushing ? (RUSHRANGEFRAC * caps.bestRange) :		// stay at RUSHRANGEFRAC of own bestRange if rushing
-        canStayOutOfRange ? outrangeRange :			// if able to outrange, stay at outrangeRange
-        snipingRange;			// stay at snipingRange if not able to stay out of range
+        snipingRange;			// stay at snipingRange if not rushing
 
     const float2 targetLeadPos = targetPos + kAIBigTimeStep * targetVel;	// shoot at position where target will be in (kAIBigTimeStep = 0.5s by default)
     const float2 targetDir = normalize(targetLeadPos - pos);
 
-    if (!canStayOutOfRange && wantRange < targetDist)	// charge at target if cannot stay out of range and target is closer than desired range
+    /*if (!canStayOutOfRange && wantRange < targetDist)	// charge at target if cannot stay out of range and target is closer than desired range
         m_ai->rushDir = targetDir;
+	*/
 
     const float2 dir = (caps.hasFixed ? directionForFixed(cluster, targetPos, targetVel, FiringFilter()) :		// try to face target if using fixed weapons
                         targetLeadPos - pos);
 
-	const float velocityMultiplier = ramming ? 0.95f :		// if ramming, match velocity with target very closely to get as near to it as possible
-		                             rushing ? 1.05f :		// if rushing, go a bit faster than the target to either avoid being rammed or close distance with fleeing target more quickly
-		                             (targetDist > 2.f * wantRange) ? 0.95f :		// if target is at more than twice the desired range, match velocity to close distance
-		                             3.f;					// if neither ramming nor rushing, go much faster than the target to be very careful not to get close
+	const float velocityMultiplier = (ramming || (targetDist > 2.f * wantRange)) ? 0.9f :		// if ramming (or if target is too far away), match velocity with target closely to get as near to it as possible
+		                             isMissileShip ? 3.f :		// if missiles are main weapon, go much faster than the target to be very careful not to get close
+		                             outgunned ? 1.25f :		// if outgunned and not ramming, go a little faster than the target to either get closer to retreating targets or prevent being rammed
+		                             0.9f;		// if not outgunned, can afford to be less careful
 
     // move to the optimal attack range
     targetCfg.cfg.position = targetLeadPos - targetDir * wantRange;		// move to position at desired range from target
@@ -220,10 +228,10 @@ uint AAttack2::update(uint blockedLanes)
     targetCfg.dims = SN_POSITION | SN_ANGLE | (rushing ? SN_TARGET_VEL : SN_VELOCITY);
     precision.pos = max(precision.pos, 0.1f * caps.bestRange);		// precision needed is a 1/10 of bestRange
 
-    // escape super fast if we are sniping, bombarding, or AI is set to always kite
-    if ((sniping || isMissileShip || (flags&SerialCommand::ALWAYS_KITE)) && !(flags&SerialCommand::ALWAYS_RUSH)) {
-		if ((targetDist < 0.75f * wantRange) && (outgunned)) {
-			targetCfg.cfg.velocity += 100.f * (targetCfg.cfg.position - pos);		// if enemy is stronger and way closer than desired, don't bother keeping fixed weapons on target, just run as fast as possible
+    // escape super fast if we are staying at range, bombarding, or AI is set to always kite
+    if ((stayingAtRange && outgunned || isMissileShip || (flags&SerialCommand::ALWAYS_KITE)) && !(flags&SerialCommand::ALWAYS_RUSH)) {
+		if ((targetDist < 0.5f * wantRange) && (tCombatVal > myCombatVal)) {
+			targetCfg.cfg.velocity += 100.f * (targetCfg.cfg.position - pos);		// if enemy is stronger and way closer than desired, don't bother keeping fixed weapons on target, just run away as fast as possible
 		}
         else if (targetDist < wantRange) {
             targetCfg.cfg.velocity += 10.f * (targetCfg.cfg.position - pos);
@@ -240,6 +248,14 @@ uint AAttack2::update(uint blockedLanes)
     else if (caps.hasFixed && targetDist <= caps.maxRange) {
         targetCfg.dims |= SN_POS_ANGLE;		// something to do with pointing in right direction more aggressively with fixed weapons
     }
+
+	if ((targetDist < 0.3f * wantRange) && rushing) {
+		targetCfg.cfg.velocity += 1.2f * (targetCfg.cfg.position - pos);		// if rushing and enemy gets too close, move awat slowly
+	}
+
+	/*if (isCriticallyDamaged) {
+		targetCfg.cfg.velocity += 100.f * (targetCfg.cfg.position - pos);		// if critically damaged just run away as fast as possible
+	}*/
 
     if (!targetCfg.dims)
         return noAction("No direction");
