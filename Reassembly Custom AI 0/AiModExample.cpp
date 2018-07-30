@@ -9,6 +9,7 @@
 
 static CVAR_PLACEHOLDER(int, kAITargetMin, 500);
 static CVAR_PLACEHOLDER(float, kAITargetThreshold, 0.25f);
+static CVAR_PLACEHOLDER(int, kTeleporterSamples, 20);
 
 #define ADD_ACTION(TYPE, ...)                       \
     if (TYPE::supportsConfig(ai->getConfig()))      \
@@ -18,6 +19,7 @@ static CVAR_PLACEHOLDER(float, kAITargetThreshold, 0.25f);
 #define SNIPERANGEFRAC 0.95			// fraction of bestRange to stay at when sniping
 #define MISSILERANGEFRAC 0.95		// if missiles are main weapon, stay at more than estimated maxRange because game is bad at determining missile range
 #define MISSILEDPSFRAC 1.0		// if missile DPS * MISSILEDPSFRAC is more than other DPS, use missiles as main weapon
+#define CRITDMGFRAC 0.65		// if ship's current HP is more than 0.65 * max HP, consider ship critically damaged
 #define RUSHCVMULT 1.1		// if enemy combatVal * RUSHCVMULT < own combatVal, rush
 #define RAMHPMULT 4.0		// if own HP is more than RAMHPMULT * target HP and own DPS is more than RAMDPSMULT * target DPS, ram
 #define RAMDPSMULT 2.0
@@ -109,6 +111,109 @@ uint ATargetEnemy2::update(uint blockedLanes)
     return LANE_TARGET;
 }
 
+/*struct AAvoidWeapon2 final : public AIAction {		// new evasion behaviour
+
+	snConfig      config;
+
+	int           culled = 0;
+	int           count = 0;
+
+	static bool supportsConfig(const AICommandConfig& cfg) { return cfg.isMobile; }
+	virtual const char* toPrettyString() const { return _("Dodging"); }
+	virtual string toStringEx() const { return str_format("Culled %d/%d", culled, count); }
+
+	AAvoidWeapon2(AI* ai) : AIAction(ai, LANE_MOVEMENT, PRI_ALWAYS) { }
+
+	virtual uint update(uint blockedLanes);
+};
+
+uint AAvoidWeapon2::update(uint blockedLanes)
+{
+	// give other actions a chance to run sometimes
+	//if (m_ai->isBigUpdate())
+	// return LANE_NONE;
+
+	const vector<Obstacle>& obs = m_ai->getQuery().queryObstacles(m_ai->command);
+
+	count = obs.size();
+	culled = m_ai->getQuery().cullForDefenses(m_ai->getAttackCaps());
+
+	float bestDamage = 0;
+	bool avoidSolution = velocityObstacles(&config.velocity, &bestDamage,
+		getClusterPos(), getCluster()->getVel(),
+		m_ai->nav->maxAccel, getTargetDirection(m_ai, obs),
+		m_ai->rushDir, obs);
+
+	ASSERT(bestDamage <= 0);
+
+	if ((m_ai->getConfig().features&Block::TELEPORTER) && bestDamage < -30)
+	{
+		// teleport me somewhere
+		const BlockCluster *cl = getCluster();
+
+		const float2 pos = cl->getAbsolutePos();
+		const float2 vel = cl->getAbsoluteVel();
+		const float  brad = cl->getBRadius();
+		const float  radius = cl->command->sb.command->sensorRadius;
+
+		const GameZone *zone = cl->zone;
+
+		const float2 tpos = m_ai->getTargetPos();
+		const float  tradius = m_ai->getAttackCaps().bestRange;
+		const bool   hasTarget = !nearZero(tpos) && tradius > 0.f;
+
+		float2 bestPos;
+		int    bestScore = bestDamage;
+
+		for (int i = 0; i<kTeleporterSamples; i++)
+		{
+			const float2 spos = pos + randpolar(brad, radius);
+
+			if (zone->intersectPointBounds(spos) ||
+				zone->intersectCircleClusterCirclesNearest(spos, brad))
+				continue;
+
+			int score = 0;
+
+			foreach(const Obstacle &ob, obs)
+			{
+				if (intersectRayCircle(spos, vel - ob.vel, ob.pos, ob.rad))
+				{
+					score -= ob.damage;
+				}
+			}
+
+			if (hasTarget && intersectPointCircle(spos, tpos, tradius))
+			{
+				// teleporter is mostly defensive so only increase a little
+				score += 1;
+			}
+
+			if (score > bestScore)
+			{
+				bestScore = score;
+				bestPos = spos;
+			}
+		}
+
+		if (!nearZero(bestPos))
+		{
+			const float angle = hasTarget ? vectorToAngle(tpos - bestPos) :
+				!nearZero(vel) ? vectorToAngle(vel) :
+				cl->getAngle();
+			if (m_ai->command->cluster->teleportToDest(bestPos, angle))
+				return LANE_MOVEMENT;
+		}
+	}
+
+	if (avoidSolution)
+	{
+		uint dims = (nearZero(m_ai->rushDir) ? SN_VELOCITY | SN_VEL_ALLOW_ROTATION : SN_VELOCITY);
+		m_ai->nav->setDest(config, dims, 0);
+		return LANE_MOVEMENT;
+	}
+	return LANE_NONE;
+}*/
 
 struct AAttack2 final : public APositionBase {
 
@@ -166,19 +271,19 @@ uint AAttack2::update(uint blockedLanes)
 	const float myCRadius = cluster->getCoreRadius();
 	const float tBRadius = target->cluster->getBRadius();
 	const float tCRadius = target->cluster->getCoreRadius();
-    const float myCombatVal = caps.rushDps / tcaps.totalHealth;	// own rushDps divided by target HP
-    const float tCombatVal = tcaps.totalDps / caps.totalHealth;	// target rushDps divided by own HP
-	const float myMissileDps = caps.totalDps - caps.rushDps; // totalDps - rushDps = DPS of missile weapons
+    const float myCombatVal = caps.rushDps / tcaps.totalHealth;		// own rushDps divided by target HP
+    const float tCombatVal = tcaps.totalDps / caps.totalHealth;		// target rushDps divided by own HP
+	const float myMissileDps = caps.totalDps - caps.rushDps;		// totalDps - rushDps = DPS of missile weapons
 	const float tMissileDps = tcaps.totalDps - tcaps.rushDps;
 	//const float longSnipeRange = LONGSNIPERANGEFRAC * caps.bestRange;		// FIXME implement this
 	//const float shortSnipeRange = SNIPERANGEFRAC * caps.bestRange;		// FIXME implement this
     const uint64 flags = m_ai->getConfig().flags;
 
-	//const bool isCriticallyDamaged = (cluster->getHealthFraction() < 0.6f);		// FIXME this causes an error 
+	//const bool isCriticallyDamaged = (cluster->getHealthFraction() < CRITDMGFRAC);		// ship is considered critically damaged and should disengage if current HP < CRITDMGFRAC - FIXME this causes Attack to be used instead of AAttack2
 
 	const bool isMissileShip = (myMissileDps > MISSILEDPSFRAC * caps.rushDps);		// consider missiles as main weapon if own missile DPS > MISSILEDPSFRAC * own non-missile DPS
 
-	const bool lowTargetValue = (((2.f * tPVal) < myPVal) && (caps.totalHealth < (2.f * tcaps.totalHealth))) ||		// FIXME come up with better name for this
+	const bool lowTargetValue = (((2.f * tPVal) < myPVal) && (caps.totalHealth < (2.f * tcaps.totalHealth))) ||		// engage more conservatively if target is tougher and lower P
 		                        ((tPVal < myPVal) && (caps.totalHealth < (4.f * tcaps.totalHealth))) ||
 		                        (5 * tPVal < myPVal);
 
@@ -305,6 +410,7 @@ bool CreateAiActions(AI* ai) {
 
     if (config.isMobile >= 2 && (config.flags & SerialCommand::DODGES)) {
         ai->addActionVanilla(VANILLA_ACTION_TYPE_AVOID_WEAPON);
+		//ADD_ACTION(AAvoidWeapon2);
     }
 
     ai->addActionVanilla(VANILLA_ACTION_TYPE_WEAPONS);
